@@ -53,9 +53,11 @@ If you prefer to keep secrets in a file, use `--env-file /path/to/usenetstreamer
 
 ## Environment Variables
 
-- `PROWLARR_URL`, `PROWLARR_API_KEY`
+- `PROWLARR_URL`, `PROWLARR_API_KEY`, `PROWLARR_STRICT_ID_MATCH`
 - `NZBDAV_URL`, `NZBDAV_API_KEY`, `NZBDAV_WEBDAV_URL`, `NZBDAV_WEBDAV_USER`, `NZBDAV_WEBDAV_PASS`
 - `ADDON_BASE_URL`
+
+`PROWLARR_STRICT_ID_MATCH` defaults to `false`. Set it to `true` if you want strictly ID-based searches (IMDb/TVDB/TMDB only). This usually yields faster, more precise matches but many indexers do not support ID queries, so you will receive fewer total results.
 
 See `.env.example` for the authoritative list.
 

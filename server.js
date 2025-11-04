@@ -999,7 +999,9 @@ app.get('/stream/:type/:id.json', async (req, res) => {
       return `${indexerId}|${indexer}|${title}|${size}`;
     };
 
-    const resultsByKey = new Map();
+  const usingStrictIdMatching = PROWLARR_STRICT_ID_MATCH;
+  const resultsByKey = usingStrictIdMatching ? null : new Map();
+  const aggregatedResults = usingStrictIdMatching ? [] : null;
     const planSummaries = [];
 
     const planExecutions = searchPlans.map((plan) => {
@@ -1048,15 +1050,21 @@ app.get('/stream/:type/:id.json', async (req, res) => {
         return !isTorrentResult(item);
       });
 
-      const beforeSize = resultsByKey.size;
-      for (const item of filteredResults) {
-        const key = deriveResultKey(item);
-        if (!key) continue;
-        if (!resultsByKey.has(key)) {
-          resultsByKey.set(key, { result: item, planType: plan.type });
+      let addedCount = 0;
+      if (usingStrictIdMatching) {
+        aggregatedResults.push(...filteredResults.map((item) => ({ result: item, planType: plan.type })));
+        addedCount = filteredResults.length;
+      } else {
+        const beforeSize = resultsByKey.size;
+        for (const item of filteredResults) {
+          const key = deriveResultKey(item);
+          if (!key) continue;
+          if (!resultsByKey.has(key)) {
+            resultsByKey.set(key, { result: item, planType: plan.type });
+          }
         }
+        addedCount = resultsByKey.size - beforeSize;
       }
-      const addedCount = resultsByKey.size - beforeSize;
 
       planSummaries.push({
         planType: plan.type,
@@ -1068,16 +1076,24 @@ app.get('/stream/:type/:id.json', async (req, res) => {
       console.log('[PROWLARR] ✅ Plan summary', planSummaries[planSummaries.length - 1]);
     }
 
-    if (resultsByKey.size === 0) {
+    const aggregationCount = usingStrictIdMatching ? aggregatedResults.length : resultsByKey.size;
+    if (aggregationCount === 0) {
       console.warn(`[PROWLARR] ⚠ All ${searchPlans.length} search plans returned no NZB results`);
+    } else if (usingStrictIdMatching) {
+      console.log('[PROWLARR] ✅ Aggregated NZB results with strict ID matching', {
+        plansRun: searchPlans.length,
+        totalResults: aggregationCount
+      });
     } else {
       console.log('[PROWLARR] ✅ Aggregated unique NZB results', {
         plansRun: searchPlans.length,
-        uniqueResults: resultsByKey.size
+        uniqueResults: aggregationCount
       });
     }
 
-    const dedupedNzbResults = Array.from(resultsByKey.values()).map((entry) => entry.result);
+    const dedupedNzbResults = usingStrictIdMatching
+      ? aggregatedResults.map((entry) => entry.result)
+      : Array.from(resultsByKey.values()).map((entry) => entry.result);
 
     const finalNzbResults = dedupedNzbResults
       .filter((result, index) => {
