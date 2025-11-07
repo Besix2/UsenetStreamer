@@ -94,7 +94,17 @@ const NZBDAV_CATEGORY_DEFAULT = process.env.NZBDAV_CATEGORY_DEFAULT || 'Movies';
 const NZBDAV_CATEGORY_OVERRIDE = (process.env.NZBDAV_CATEGORY || '').trim();
 const NZBDAV_POLL_INTERVAL_MS = 2000;
 const NZBDAV_POLL_TIMEOUT_MS = 80000;
-const NZBDAV_CACHE_TTL_MS = 3600000;
+const NZBDAV_CACHE_TTL_MINUTES = (() => {
+  const raw = Number(process.env.NZBDAV_CACHE_TTL_MINUTES);
+  if (Number.isFinite(raw) && raw > 0) {
+    return raw;
+  }
+  if (raw === 0) {
+    return 0;
+  }
+  return 1440; // default 24 hours
+})();
+const NZBDAV_CACHE_TTL_MS = NZBDAV_CACHE_TTL_MINUTES > 0 ? NZBDAV_CACHE_TTL_MINUTES * 60 * 1000 : 0;
 const NZBDAV_MAX_DIRECTORY_DEPTH = 6;
 const NZBDAV_WEBDAV_USER = (process.env.NZBDAV_WEBDAV_USER || '').trim();
 const NZBDAV_WEBDAV_PASS = (process.env.NZBDAV_WEBDAV_PASS || '').trim();
@@ -686,6 +696,14 @@ function inferMimeType(fileName) {
   return VIDEO_MIME_MAP.get(ext) || 'application/octet-stream';
 }
 
+function buildNzbdavCacheKey(downloadUrl, category, requestedEpisode = null) {
+  const keyParts = [downloadUrl, category];
+  if (requestedEpisode && Number.isFinite(requestedEpisode.season) && Number.isFinite(requestedEpisode.episode)) {
+    keyParts.push(`${requestedEpisode.season}x${requestedEpisode.episode}`);
+  }
+  return keyParts.join('|');
+}
+
 async function safeStat(filePath) {
   try {
     return await fs.promises.stat(filePath);
@@ -1200,6 +1218,8 @@ async function streamHandler(req, res) {
     ensureIndexerManagerConfigured();
     ensureNzbdavConfigured();
 
+    const requestedEpisode = parseRequestedEpisode(type, id, req.query || {});
+
     const pickFirstDefined = (...values) => values.find((value) => value !== undefined && value !== null && String(value).trim() !== '') || null;
     const meta = req.query || {};
 
@@ -1576,6 +1596,9 @@ async function streamHandler(req, res) {
   console.log(`${INDEXER_LOG_PREFIX} Final NZB selection: ${finalNzbResults.length} results`);
 
     const addonBaseUrl = ADDON_BASE_URL.replace(/\/$/, '');
+    cleanupNzbdavCache();
+
+    const categoryForType = getNzbdavCategory(type);
 
     const streams = finalNzbResults
       .sort((a, b) => (b.size || 0) - (a.size || 0))
@@ -1597,8 +1620,15 @@ async function streamHandler(req, res) {
   if (result.size) baseParams.set('size', String(result.size));
     if (result.title) baseParams.set('title', result.title);
 
-    const tokenSegment = ADDON_SHARED_SECRET ? `/${ADDON_SHARED_SECRET}` : '';
-    const streamUrl = `${addonBaseUrl}${tokenSegment}/nzb/stream?${baseParams.toString()}`;
+        const cacheKey = buildNzbdavCacheKey(result.downloadUrl, categoryForType, requestedEpisode);
+        const cacheEntry = nzbdavStreamCache.get(cacheKey);
+        const isInstant = cacheEntry?.status === 'ready';
+        const tokenSegment = ADDON_SHARED_SECRET ? `/${ADDON_SHARED_SECRET}` : '';
+        const streamUrl = `${addonBaseUrl}${tokenSegment}/nzb/stream?${baseParams.toString()}`;
+        const tags = ['📰 NZB'];
+        if (quality) tags.push(quality);
+        if (sizeString) tags.push(sizeString);
+        if (isInstant) tags.push('⚡ Instant');
         const name = 'UsenetStreamer';
         const behaviorHints = {
           notWebReady: true,
@@ -1608,8 +1638,12 @@ async function streamHandler(req, res) {
           }
         };
 
+        if (isInstant) {
+          behaviorHints.cached = true;
+        }
+
         return {
-          title: `${result.title}\n${['📰 NZB', quality, sizeString].filter(Boolean).join(' • ')}\n${result.indexer}`,
+          title: `${result.title}\n${tags.filter(Boolean).join(' • ')}\n${result.indexer}`,
           name,
           url: streamUrl,
           behaviorHints,
@@ -1619,11 +1653,17 @@ async function streamHandler(req, res) {
             size: result.size,
             quality,
             age: result.age,
-            type: 'nzb'
+            type: 'nzb',
+            cached: Boolean(isInstant)
           }
         };
       })
       .filter(Boolean);
+
+    const instantCount = streams.filter((stream) => stream?.meta?.cached).length;
+    if (instantCount > 0) {
+      console.log(`[STREMIO] ${instantCount}/${streams.length} streams already cached in NZBDav`);
+    }
 
     console.log(`[STREMIO] Returning ${streams.length} NZB streams`);
 
@@ -1661,11 +1701,7 @@ async function handleNzbdavStream(req, res) {
   try {
     const category = getNzbdavCategory(type);
     const requestedEpisode = parseRequestedEpisode(type, id, req.query || {});
-    const cacheKeyParts = [downloadUrl, category];
-    if (requestedEpisode) {
-      cacheKeyParts.push(`${requestedEpisode.season}x${requestedEpisode.episode}`);
-    }
-    const cacheKey = cacheKeyParts.join('|');
+    const cacheKey = buildNzbdavCacheKey(downloadUrl, category, requestedEpisode);
 
     const streamData = await getOrCreateNzbdavStream(cacheKey, () =>
       buildNzbdavStream({ downloadUrl, category, title, requestedEpisode })
