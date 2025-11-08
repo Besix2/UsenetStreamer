@@ -675,8 +675,8 @@ function parseRequestedEpisode(type, id, query = {}) {
   if (type === 'series' && typeof id === 'string' && id.includes(':')) {
     const parts = id.split(':');
     if (parts.length >= 3) {
-      const season = extractInt(parts[1]);
-      const episode = extractInt(parts[2]);
+      const episode = extractInt(parts[parts.length - 1]);
+      const season = extractInt(parts[parts.length - 2]);
       if (season && episode) {
         return { season, episode };
       }
@@ -1316,7 +1316,7 @@ function manifestHandler(req, res) {
     resources: ['stream'],
     types: ['movie', 'series', 'channel', 'tv'],
     catalogs: [],
-    idPrefixes: ['tt']
+    idPrefixes: ['tt', 'tvdb']
   });
 }
 
@@ -1331,9 +1331,34 @@ async function streamHandler(req, res) {
   const { type, id } = req.params;
   console.log(`[REQUEST] Received request for ${type} ID: ${id}`);
 
-  const primaryId = id.split(':')[0];
-  if (!/^tt\d+$/.test(primaryId)) {
-    res.status(400).json({ error: `Unsupported ID prefix for indexer manager search: ${primaryId}` });
+  let baseIdentifier = id;
+  if (type === 'series' && typeof id === 'string') {
+    const parts = id.split(':');
+    if (parts.length >= 3) {
+      const potentialEpisode = Number.parseInt(parts[parts.length - 1], 10);
+      const potentialSeason = Number.parseInt(parts[parts.length - 2], 10);
+      if (Number.isFinite(potentialSeason) && Number.isFinite(potentialEpisode)) {
+        baseIdentifier = parts.slice(0, parts.length - 2).join(':');
+      }
+    }
+  }
+
+  let incomingImdbId = null;
+  let incomingTvdbId = null;
+
+  if (/^tt\d+$/i.test(baseIdentifier)) {
+    incomingImdbId = baseIdentifier.startsWith('tt') ? baseIdentifier : `tt${baseIdentifier}`;
+    baseIdentifier = incomingImdbId;
+  } else {
+    const tvdbMatch = baseIdentifier.match(/^tvdb:([0-9]+)(?::.*)?$/i);
+    if (tvdbMatch) {
+      incomingTvdbId = tvdbMatch[1];
+      baseIdentifier = `tvdb:${incomingTvdbId}`;
+    }
+  }
+
+  if (!incomingImdbId && !incomingTvdbId) {
+    res.status(400).json({ error: `Unsupported ID prefix for indexer manager search: ${baseIdentifier}` });
     return;
   }
 
@@ -1379,11 +1404,21 @@ async function streamHandler(req, res) {
     );
 
     const metaSources = [meta];
+    if (incomingImdbId) {
+      metaSources.push({ ids: { imdb: incomingImdbId }, imdb_id: incomingImdbId });
+    }
+    if (incomingTvdbId) {
+      metaSources.push({ ids: { tvdb: incomingTvdbId }, tvdb_id: incomingTvdbId });
+    }
     let cinemetaMeta = null;
 
-    const needsCinemeta = (!hasTitleInQuery) || (type === 'series' && !hasTvdbInQuery) || (type === 'movie' && !hasTmdbInQuery);
+    const needsCinemeta = !incomingTvdbId && (
+      (!hasTitleInQuery) ||
+      (type === 'series' && !hasTvdbInQuery) ||
+      (type === 'movie' && !hasTmdbInQuery)
+    );
     if (needsCinemeta) {
-      const cinemetaPath = type === 'series' ? `series/${primaryId}.json` : `${type}/${primaryId}.json`;
+      const cinemetaPath = type === 'series' ? `series/${baseIdentifier}.json` : `${type}/${baseIdentifier}.json`;
       const cinemetaUrl = `${CINEMETA_URL}/${cinemetaPath}`;
       try {
         console.log(`[CINEMETA] Fetching metadata from ${cinemetaUrl}`);
@@ -1400,7 +1435,7 @@ async function streamHandler(req, res) {
           console.warn(`[CINEMETA] No metadata payload returned for ${cinemetaUrl}`);
         }
       } catch (error) {
-        console.warn(`[CINEMETA] Failed to fetch metadata for ${primaryId}: ${error.message}`);
+        console.warn(`[CINEMETA] Failed to fetch metadata for ${baseIdentifier}: ${error.message}`);
       }
     }
 
@@ -1422,15 +1457,8 @@ async function streamHandler(req, res) {
       return collected;
     };
 
-    let seasonNum = null;
-    let episodeNum = null;
-    if (type === 'series' && id.includes(':')) {
-      const [, season, episode] = id.split(':');
-      const parsedSeason = Number.parseInt(season, 10);
-      const parsedEpisode = Number.parseInt(episode, 10);
-      seasonNum = Number.isFinite(parsedSeason) ? parsedSeason : null;
-      episodeNum = Number.isFinite(parsedEpisode) ? parsedEpisode : null;
-    }
+    const seasonNum = requestedEpisode?.season ?? null;
+    const episodeNum = requestedEpisode?.episode ?? null;
 
     const normalizeImdb = (value) => {
       if (value === null || value === undefined) return null;
@@ -1458,7 +1486,7 @@ async function streamHandler(req, res) {
             (src) => src?.ids?.imdb,
             (src) => src?.externals?.imdb
           ),
-          primaryId
+          incomingImdbId
         )
       ),
       tmdb: normalizeNumericId(
@@ -1485,7 +1513,8 @@ async function streamHandler(req, res) {
             (src) => src?.externals?.tvdb,
             (src) => src?.tvdbSlug,
             (src) => src?.tvdbid
-          )
+          ),
+          incomingTvdbId
         )
       )
     };
@@ -1583,16 +1612,23 @@ async function streamHandler(req, res) {
     }
 
     // Only add text-based search if strict ID matching is disabled
-    if (!INDEXER_MANAGER_STRICT_ID_MATCH) {
-      const textQueryFallback = (textQueryParts.join(' ').trim() || primaryId).trim();
-      const addedTextPlan = addPlan('search', { rawQuery: textQueryFallback });
-      if (addedTextPlan) {
-        console.log(`${INDEXER_LOG_PREFIX} Added text search plan`, { query: textQueryFallback });
+    if (!INDEXER_MANAGER_STRICT_ID_MATCH && !incomingTvdbId) {
+      const fallbackIdentifier = incomingImdbId || '';
+      const textQueryCandidate = textQueryParts.join(' ').trim();
+      const textQueryFallback = (textQueryCandidate || fallbackIdentifier).trim();
+      if (textQueryFallback) {
+        const addedTextPlan = addPlan('search', { rawQuery: textQueryFallback });
+        if (addedTextPlan) {
+          console.log(`${INDEXER_LOG_PREFIX} Added text search plan`, { query: textQueryFallback });
+        } else {
+          console.log(`${INDEXER_LOG_PREFIX} Text search plan already present`, { query: textQueryFallback });
+        }
       } else {
-        console.log(`${INDEXER_LOG_PREFIX} Text search plan already present`, { query: textQueryFallback });
+        console.log(`${INDEXER_LOG_PREFIX} Skipping text search plan; insufficient metadata`);
       }
     } else {
-      console.log(`${INDEXER_LOG_PREFIX} Strict ID matching enabled; skipping text-based search`);
+      const reason = INDEXER_MANAGER_STRICT_ID_MATCH ? 'strict ID matching enabled' : 'tvdb identifier provided';
+      console.log(`${INDEXER_LOG_PREFIX} ${reason}; skipping text-based search`);
     }
 
     if (INDEXER_MANAGER_INDEXERS) {

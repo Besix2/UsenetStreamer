@@ -7,6 +7,7 @@ UsenetStreamer is a Stremio addon that bridges a Usenet indexer manager (Prowlar
 ## Features
 
 - ID-aware search plans (IMDb/TMDB/TVDB) with automatic metadata enrichment.
+- Direct TVDB-prefixed Stremio IDs are accepted without Cinemeta lookups—requests translate straight into `{TvdbId:...}` searches.
 - Parallel Prowlarr/NZBHydra queries with deduplicated NZB aggregation.
 - Direct WebDAV streaming from NZBDav (no local mounts required).
 - Configurable via environment variables (see `.env.example`).
