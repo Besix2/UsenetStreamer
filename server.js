@@ -15,7 +15,7 @@ runtimeEnv.applyRuntimeEnv();
 
 const app = express();
 const port = Number(process.env.PORT || 7000);
-const ADDON_VERSION = '1.2.1';
+const ADDON_VERSION = '1.3.0';
 
 app.use(cors());
 app.use('/assets', express.static(path.join(__dirname, 'assets')));
