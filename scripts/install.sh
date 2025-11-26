@@ -3,11 +3,11 @@
 # Exit immediately if a command exits with a non-zero status
 set -e
 
-echo "--- Starting Server Installation (Docker + Caddy) ---"
+echo "--- Starting Server Installation ---"
 
 # --- PART 1: DOCKER INSTALLATION ---
 
-echo "[1/2] Installing Docker..."
+echo "[1/3] Installing Docker..."
 
 # 1. Update existing list of packages
 sudo apt update
@@ -38,7 +38,7 @@ echo "Docker installed successfully."
 
 # --- PART 2: CADDY INSTALLATION ---
 
-echo "[2/2] Installing Caddy Web Server..."
+echo "[2/3] Installing Caddy Web Server..."
 
 # 1. Add Caddy GPG key
 curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor --yes -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
@@ -52,7 +52,28 @@ sudo apt install -y caddy
 
 echo "Caddy installed successfully."
 
-# --- PART 3: CADDY CONFIGURATION ---
+# --- PART 3: FIREWALL CONFIGURATION ---
+
+echo "[3/3] Configuring Firewall (UFW)..."
+
+# Allow SSH first (Critical to avoid lockout)
+sudo ufw allow 22/tcp
+
+# Allow HTTP/HTTPS for Caddy
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+
+# Allow Application Ports (NZBDav & UsenetStreamer direct access)
+sudo ufw allow 3000/tcp
+sudo ufw allow 7000/tcp
+
+# Enable firewall (using --force to avoid 'Command may disrupt existing ssh connections' prompt)
+sudo ufw --force enable
+sudo ufw reload
+
+echo "Firewall configured."
+
+# --- PART 4: CADDY CONFIGURATION ---
 
 echo "--- Configuration ---"
 echo "We need to configure Caddy to point to your Docker container."
@@ -63,7 +84,6 @@ if [ -z "$USER_DOMAIN" ]; then
 else
   echo "Writing configuration to /etc/caddy/Caddyfile..."
   
-  # This writes the config block to the file using sudo
   cat <<EOF | sudo tee /etc/caddy/Caddyfile
 $USER_DOMAIN {
     reverse_proxy 127.0.0.1:7000
@@ -76,5 +96,6 @@ fi
 
 echo "--- Installation Complete ---"
 echo "1. Docker is ready."
-echo "2. Caddy is running and serving $USER_DOMAIN -> Port 7000."
-echo "3. Please log out and log back in to use Docker commands without 'sudo'."
+echo "2. Caddy is running and serving $USER_DOMAIN."
+echo "3. Firewall is active (Ports 22, 80, 443, 3000, 7000 allowed)."
+echo "4. Please log out and log back in to use Docker commands without 'sudo'."
