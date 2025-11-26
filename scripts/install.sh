@@ -67,7 +67,16 @@ sudo ufw allow 443/tcp
 sudo ufw allow 3000/tcp
 sudo ufw allow 7000/tcp
 
-# Enable firewall (using --force to avoid 'Command may disrupt existing ssh connections' prompt)
+# Ask about Prowlarr/NZBHydra
+read -p "Do you want to expose Prowlarr/NZBHydra (Port 9696)? (y/n): " PROWLARR_CHOICE
+if [[ "$PROWLARR_CHOICE" =~ ^[Yy]$ ]]; then
+    echo "Allowing Port 9696..."
+    sudo ufw allow 9696/tcp
+else
+    echo "Skipping Port 9696."
+fi
+
+# Enable firewall (using --force to avoid prompt)
 sudo ufw --force enable
 sudo ufw reload
 
@@ -97,5 +106,5 @@ fi
 echo "--- Installation Complete ---"
 echo "1. Docker is ready."
 echo "2. Caddy is running and serving $USER_DOMAIN."
-echo "3. Firewall is active (Ports 22, 80, 443, 3000, 7000 allowed)."
+echo "3. Firewall is active."
 echo "4. Please log out and log back in to use Docker commands without 'sudo'."
