@@ -30,7 +30,7 @@ ssh root@your-vps-ip
 ```bash
 git clone https://github.com/Sanket9225/UsenetStreamer.git
 cd UsenetStreamer/Scripts
-chmod +x install_.sh
+chmod +x install.sh
 ./install.sh
 newgrp docker
 ```
