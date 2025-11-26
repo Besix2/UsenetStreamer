@@ -47,6 +47,6 @@ Visit the services:
 
 - Update `INDEXER_MANAGER_API_KEY`, NZBDav credentials, and `ADDON_BASE_URL` inside the UsenetStreamer dashboard (now reachable at your DuckDNS URL).
 - Run the **Connection Tests** tab to confirm every service is reachable.
-- Add `https://mystreamer.duckdns.org/super-secret-token/manifest.json` inside Stremio.
+- Add the link displayed at the bottom of the UsenetStreamer dashboard into stremios addon search bar and a install window should pop up.
 
 Need more help? Jump into [Discord](https://discord.gg/NJsprZyz) and share screenshots/logs.
