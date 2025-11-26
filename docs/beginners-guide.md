@@ -28,7 +28,7 @@ ssh root@your-vps-ip
 ## 2. Install Docker, Compose, Caddy and the Usenetstreamer Stack
 ```bash
 git clone https://github.com/Sanket9225/UsenetStreamer.git
-cd UsenetStreamer/Scripts
+cd UsenetStreamer/scripts
 chmod +x install.sh
 ./install.sh
 newgrp docker
